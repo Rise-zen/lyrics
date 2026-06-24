@@ -1,0 +1,23 @@
+[package]
+name = "lyrics"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal lyrics display with MPRIS auto-detection, multi-source fetching, and refract theme integration."
+license = "MIT"
+repository = "https://github.com/Rise-zen/lyrics"
+authors = ["Rise-zen"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3
+
+[dependencies]
+anyhow = "1"
+ctrlc = "3"
+crossterm = "0.27"
+dbus = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
