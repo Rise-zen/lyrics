@@ -1,5 +1,7 @@
 use anyhow::Result;
 use serde::Deserialize;
+use std::fs;
+use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Deserialize)]
@@ -21,7 +23,43 @@ pub enum Lyrics {
     NotFound,
 }
 
+fn cache_path(title: &str, artist: &str) -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let safe = |s: &str| -> String {
+        s.chars()
+            .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+            .collect()
+    };
+    PathBuf::from(format!("{home}/.cache/lyrics/{}__{}.lrc", safe(artist), safe(title)))
+}
+
+fn load_cached(title: &str, artist: &str) -> Option<Lyrics> {
+    let raw = fs::read_to_string(cache_path(title, artist)).ok()?;
+    if let Some(plain) = raw.strip_prefix("PLAIN\n") {
+        return (!plain.trim().is_empty()).then(|| Lyrics::Plain(plain.to_string()));
+    }
+    let lines = parse_lrc(&raw);
+    (!lines.is_empty()).then_some(Lyrics::Synced(lines))
+}
+
+fn save_cached(title: &str, artist: &str, lyrics: &Lyrics, raw_synced: Option<&str>) {
+    let path = cache_path(title, artist);
+    if let Some(p) = path.parent() {
+        let _ = fs::create_dir_all(p);
+    }
+    let body = match (lyrics, raw_synced) {
+        (Lyrics::Synced(_), Some(lrc)) => lrc.to_string(),
+        (Lyrics::Plain(t), _) => format!("PLAIN\n{t}"),
+        _ => return,
+    };
+    let _ = fs::write(path, body);
+}
+
 pub fn fetch(title: &str, artist: &str, album: &str, duration_secs: Option<f64>) -> Result<Lyrics> {
+    if let Some(cached) = load_cached(title, artist) {
+        return Ok(cached);
+    }
+
     let client = reqwest::blocking::Client::builder()
         .user_agent("lyrics-cli/0.1")
         .timeout(Duration::from_secs(10))
@@ -48,17 +86,17 @@ pub fn fetch(title: &str, artist: &str, album: &str, duration_secs: Option<f64>)
             let lines = parse_lrc(synced);
             if !lines.is_empty() {
                 let result = Lyrics::Synced(lines);
+                save_cached(title, artist, &result, Some(synced));
                 return Ok(result);
             }
         }
     }
 
-    // Netease has much better coverage for Russian-language tracks than lrclib
-    // and returns synced LRC, so try it before falling back to plain text.
     if let Ok(Some(lrc)) = crate::netease::fetch_lrc(title, artist) {
         let lines = parse_lrc(&lrc);
         if !lines.is_empty() {
             let result = Lyrics::Synced(lines);
+            save_cached(title, artist, &result, Some(&lrc));
             return Ok(result);
         }
     }
@@ -67,20 +105,21 @@ pub fn fetch(title: &str, artist: &str, album: &str, duration_secs: Option<f64>)
         if let Some(plain) = p.plain_lyrics {
             if !plain.trim().is_empty() {
                 let result = Lyrics::Plain(plain);
+                save_cached(title, artist, &result, None);
                 return Ok(result);
             }
         }
     }
 
-    // lyrics.ovh — no sync, decent English/Euro pop coverage.
     if let Ok(Some(plain)) = crate::lyrics_ovh::fetch(title, artist) {
         let result = Lyrics::Plain(plain);
+        save_cached(title, artist, &result, None);
         return Ok(result);
     }
 
-    // Genius — huge catalog including hip-hop/underground, scraped from HTML.
     if let Ok(Some(plain)) = crate::genius::fetch(title, artist) {
         let result = Lyrics::Plain(plain);
+        save_cached(title, artist, &result, None);
         return Ok(result);
     }
 

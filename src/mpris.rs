@@ -17,6 +17,21 @@ pub struct PlayerState {
     pub playing: bool,
 }
 
+fn has_playable_metadata(conn: &Connection, dest: &str) -> bool {
+    let proxy = conn.with_proxy(dest, "/org/mpris/MediaPlayer2", Duration::from_millis(500));
+    let Ok(meta): std::result::Result<PropMap, _> = proxy.get("org.mpris.MediaPlayer2.Player", "Metadata") else {
+        return false;
+    };
+    meta.get("xesam:title")
+        .and_then(|v| v.0.as_str())
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// Picks the best MPRIS player on the bus: anything currently playing a
+/// titled track wins. Spotify is preferred among equals (long-running, usually
+/// the user's "main" player), but any player with real metadata beats Spotify
+/// when Spotify is idle.
 fn find_player_dest(conn: &Connection) -> Result<String> {
     let proxy = conn.with_proxy(
         "org.freedesktop.DBus",
@@ -25,14 +40,23 @@ fn find_player_dest(conn: &Connection) -> Result<String> {
     );
     let (names,): (Vec<String>,) = proxy.method_call("org.freedesktop.DBus", "ListNames", ())?;
 
-    let mut mpris_names: Vec<String> = names
+    let mpris_names: Vec<String> = names
         .into_iter()
         .filter(|n| n.starts_with("org.mpris.MediaPlayer2."))
         .collect();
 
-    if let Some(pos) = mpris_names.iter().position(|n| n.contains("spotify")) {
-        return Ok(mpris_names.remove(pos));
+    let with_meta: Vec<&String> = mpris_names
+        .iter()
+        .filter(|n| has_playable_metadata(conn, n))
+        .collect();
+
+    if let Some(s) = with_meta.iter().find(|n| n.contains("spotify")) {
+        return Ok((*s).clone());
     }
+    if let Some(s) = with_meta.first() {
+        return Ok((*s).clone());
+    }
+
     mpris_names
         .into_iter()
         .next()
