@@ -190,7 +190,7 @@ fn render_music_waiting(out: &mut Stdout, cols: u16, rows: u16, palette: &theme:
     let row = rows / 2;
     let col = cols / 2;
 
-    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0) as f64;
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_millis() as f64;
     let period = 2200.0;
     let phase = now_ms / period;
     let n = palette.accents.len().max(1);
