@@ -1,3 +1,4 @@
+mod daemon;
 mod font;
 mod genius;
 mod lyrics_api;
@@ -24,6 +25,12 @@ fn main() -> Result<()> {
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
     ctrlc::set_handler(move || r.store(false, Ordering::SeqCst))?;
+
+    // Daemon mode: no terminal UI, just write /tmp/lyrics.json for the
+    // quickshell panel (lyrics-panel) to render. Triggered by `lyrics --json`.
+    if std::env::args().any(|a| a == "--json" || a == "--daemon") {
+        return daemon::run(&running);
+    }
 
     let mut out = stdout();
     execute!(out, terminal::EnterAlternateScreen, cursor::Hide)?;

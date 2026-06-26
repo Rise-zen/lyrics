@@ -9,6 +9,10 @@ pub struct Track {
     pub artist: String,
     pub album: String,
     pub length_secs: Option<f64>,
+    pub art_url: String,
+    /// Raw `mpris:trackid` path (e.g. "/com/spotify/track/6zVyJMLSRtdJuzb4VU86tX").
+    /// Used to build a playable URI for click-to-jump in the orbital clock.
+    pub track_id: String,
 }
 
 pub struct PlayerState {
@@ -97,8 +101,24 @@ pub fn poll(conn: &Connection) -> Result<PlayerState> {
         .and_then(|v| v.0.as_i64())
         .map(|us| us as f64 / 1_000_000.0);
 
+    let art_url = metadata
+        .get("mpris:artUrl")
+        .and_then(|v| v.0.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // mpris:trackid can be either a plain string or an ObjectPath; try both.
+    let track_id = metadata
+        .get("mpris:trackid")
+        .map(|v| {
+            v.0.as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("{:?}", v.0))
+        })
+        .unwrap_or_default();
+
     Ok(PlayerState {
-        track: Track { title, artist, album, length_secs },
+        track: Track { title, artist, album, length_secs, art_url, track_id },
         position_secs: position_us as f64 / 1_000_000.0,
         playing: status == "Playing",
     })
