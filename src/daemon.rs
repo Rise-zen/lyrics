@@ -19,13 +19,35 @@ fn state_path() -> PathBuf {
     PathBuf::from("/tmp/lyrics.json")
 }
 
+fn recent_cache_path() -> PathBuf {
+    let dir = std::env::var("HOME")
+        .map(|h| PathBuf::from(h).join(".cache"))
+        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+        .join("lyrics");
+    let _ = fs::create_dir_all(&dir);
+    dir.join("recent.json")
+}
+
+fn load_recent() -> Vec<RecentTrack> {
+    fs::read_to_string(recent_cache_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_recent(recent: &[RecentTrack]) {
+    if let Ok(json) = serde_json::to_string(recent) {
+        let _ = fs::write(recent_cache_path(), json);
+    }
+}
+
 #[derive(Serialize)]
 struct LineOut {
     time: f64,
     text: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, serde::Deserialize, Clone)]
 struct RecentTrack {
     title: String,
     artist: String,
@@ -340,7 +362,7 @@ pub fn run(running: &AtomicBool) -> Result<()> {
     // Rolling history of recently seen tracks (newest first). A new entry is
     // pushed whenever a track gains both a known cover and an accent — that
     // way we don't fill the orbit with greys before the art worker resolves.
-    let mut recent: Vec<RecentTrack> = Vec::new();
+    let mut recent: Vec<RecentTrack> = load_recent();
     let mut last_history_key: Option<(String, String)> = None;
     let history_limit = 12;
 
@@ -392,9 +414,15 @@ pub fn run(running: &AtomicBool) -> Result<()> {
                     ))
                 });
 
-                // Promote the current track into the history once we actually
-                // have its cover, so the orbit never shows blank placeholders.
+                // Promote the current track into the history once we have a
+                // real cover AND a click-to-jump URI. The URI gate filters out
+                // Chromium/Firefox MPRIS sessions (YouTube/SoundCloud tabs) —
+                // those expose tab favicons as cover art but have no
+                // spotify:track:* identifier, so they'd just clutter the orbit
+                // with browser icons.
+                let uri = spotify_uri_from_trackid(&state.track.track_id);
                 if !cover_path.is_empty()
+                    && !uri.is_empty()
                     && last_history_key.as_ref() != current_key.as_ref()
                 {
                     if let Some(k) = current_key.clone() {
@@ -403,12 +431,12 @@ pub fn run(running: &AtomicBool) -> Result<()> {
                             artist: state.track.artist.clone(),
                             cover: cover_path.clone(),
                             accent: accent.clone(),
-                            uri: spotify_uri_from_trackid(&state.track.track_id),
+                            uri,
                         };
-                        // Dedup: drop any older copy of this track.
                         recent.retain(|t| !(t.title == entry.title && t.artist == entry.artist));
                         recent.insert(0, entry);
                         recent.truncate(history_limit);
+                        save_recent(&recent);
                         last_history_key = Some(k);
                     }
                 }
