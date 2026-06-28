@@ -362,7 +362,7 @@ pub fn run(running: &AtomicBool) -> Result<()> {
     // Rolling history of recently seen tracks (newest first). A new entry is
     // pushed whenever a track gains both a known cover and an accent — that
     // way we don't fill the orbit with greys before the art worker resolves.
-    let mut recent: Vec<RecentTrack> = load_recent();
+    let mut recent: Vec<RecentTrack> = Vec::new();
     let mut last_history_key: Option<(String, String)> = None;
     let history_limit = 12;
 
@@ -436,7 +436,6 @@ pub fn run(running: &AtomicBool) -> Result<()> {
                         recent.retain(|t| !(t.title == entry.title && t.artist == entry.artist));
                         recent.insert(0, entry);
                         recent.truncate(history_limit);
-                        save_recent(&recent);
                         last_history_key = Some(k);
                     }
                 }
