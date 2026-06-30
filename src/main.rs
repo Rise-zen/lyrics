@@ -170,21 +170,52 @@ fn render(state: &mpris::PlayerState, lyrics: &Lyrics, palette: &theme::Palette)
     Ok(())
 }
 
-/// Renders a single lyric line as huge block letters, centered both
-/// horizontally and vertically — the "one giant line at a time" look of
-/// tacoproz1/tacos-terminal-lyrics, instead of a scrolling list.
+/// Word-wraps `text` so each piece, once blown up to block letters, fits within
+/// `max_cols`. A single word wider than the terminal is kept as-is (it will be
+/// clipped) rather than dropped.
+fn wrap_to_width(text: &str, max_cols: u16) -> Vec<String> {
+    let block_width = |s: &str| font::render(s).iter().map(|r| r.chars().count()).max().unwrap_or(0) as u16;
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if cur.is_empty() { word.to_string() } else { format!("{cur} {word}") };
+        if cur.is_empty() || block_width(&candidate) <= max_cols {
+            cur = candidate;
+        } else {
+            lines.push(std::mem::take(&mut cur));
+            cur = word.to_string();
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+/// Renders a lyric line as huge block letters, centered horizontally and
+/// vertically. Long lines wrap onto stacked block-rows instead of running off
+/// the edge of the terminal.
 fn render_block_line(out: &mut Stdout, cols: u16, rows: u16, text: &str, color: Color) -> Result<()> {
-    let glyph_rows = font::render(text);
-    let block_width = glyph_rows.iter().map(|r| r.chars().count()).max().unwrap_or(0) as u16;
-    let block_height = glyph_rows.len() as u16;
+    let blocks: Vec<Vec<String>> = wrap_to_width(text, cols).iter().map(|l| font::render(l)).collect();
 
-    let top = if block_height < rows { (rows - block_height) / 2 } else { 0 };
-    let left = if block_width < cols { (cols - block_width) / 2 } else { 0 };
+    let gap: u16 = 1;
+    let total_height = blocks.len() as u16 * font::HEIGHT as u16 + gap * blocks.len().saturating_sub(1) as u16;
+    let mut y = if total_height < rows { (rows - total_height) / 2 } else { 0 };
 
-    for (i, line) in glyph_rows.iter().enumerate() {
-        let clipped: String = line.chars().take(cols as usize).collect();
-        execute!(out, cursor::MoveTo(left, top + i as u16))?;
-        execute!(out, SetForegroundColor(color), Print(clipped), ResetColor)?;
+    for block in &blocks {
+        let block_width = block.iter().map(|r| r.chars().count()).max().unwrap_or(0) as u16;
+        let left = if block_width < cols { (cols - block_width) / 2 } else { 0 };
+        for line in block {
+            let clipped: String = line.chars().take(cols as usize).collect();
+            execute!(out, cursor::MoveTo(left, y))?;
+            execute!(out, SetForegroundColor(color), Print(clipped), ResetColor)?;
+            y += 1;
+        }
+        y += gap;
     }
     Ok(())
 }

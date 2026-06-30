@@ -19,28 +19,6 @@ fn state_path() -> PathBuf {
     PathBuf::from("/tmp/lyrics.json")
 }
 
-fn recent_cache_path() -> PathBuf {
-    let dir = std::env::var("HOME")
-        .map(|h| PathBuf::from(h).join(".cache"))
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
-        .join("lyrics");
-    let _ = fs::create_dir_all(&dir);
-    dir.join("recent.json")
-}
-
-fn load_recent() -> Vec<RecentTrack> {
-    fs::read_to_string(recent_cache_path())
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-fn save_recent(recent: &[RecentTrack]) {
-    if let Ok(json) = serde_json::to_string(recent) {
-        let _ = fs::write(recent_cache_path(), json);
-    }
-}
-
 #[derive(Serialize)]
 struct LineOut {
     time: f64,
@@ -352,7 +330,6 @@ pub fn run(running: &AtomicBool) -> Result<()> {
     let (art_tx, art_rx) = spawn_art_worker();
 
     let mut current_key: Option<(String, String)> = None;
-    let mut lyrics = Lyrics::NotFound;
     let mut cached_lines: Vec<LineOut> = Vec::new();
     let mut cached_kind: &'static str = "none";
     // accent derived from the cover art; falls back to the astrium palette
@@ -369,8 +346,7 @@ pub fn run(running: &AtomicBool) -> Result<()> {
     while running.load(Ordering::SeqCst) {
         while let Ok(resp) = res_rx.try_recv() {
             if current_key.as_ref() == Some(&resp.key) {
-                lyrics = resp.lyrics;
-                let (l, k) = build_lines(&lyrics);
+                let (l, k) = build_lines(&resp.lyrics);
                 cached_lines = l;
                 cached_kind = k;
             }
@@ -387,7 +363,6 @@ pub fn run(running: &AtomicBool) -> Result<()> {
                 let key = (state.track.title.clone(), state.track.artist.clone());
                 if current_key.as_ref() != Some(&key) {
                     current_key = Some(key.clone());
-                    lyrics = Lyrics::NotFound;
                     cached_lines = Vec::new();
                     cached_kind = "none";
                     art_accent = None;
