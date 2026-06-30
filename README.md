@@ -4,7 +4,9 @@ Terminal lyrics display. Detects the currently playing track via MPRIS, fetches
 synced lyrics from multiple sources, and renders one giant line at a time in
 the colors of your wallpaper-derived theme.
 
-![demo placeholder](demo.gif)
+| English | Русский |
+|---|---|
+| ![English preview](english_preview.jpg) | ![Russian preview](russian_preview.jpg) |
 
 ## Features
 
