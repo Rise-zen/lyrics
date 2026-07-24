@@ -55,10 +55,48 @@ fn save_cached(title: &str, artist: &str, lyrics: &Lyrics, raw_synced: Option<&s
     let _ = fs::write(path, body);
 }
 
+fn clean_title(s: &str) -> String {
+    let mut t = s;
+    for delim in [" (", " [", " - "] {
+        if let Some(i) = t.find(delim) {
+            if delim == " - " {
+                let tail = t[i + 3..].to_lowercase();
+                let taggy = [
+                    "remaster", "live", "version", "edit", "mix", "remix", "feat",
+                    "acoustic", "mono", "stereo", "deluxe", "bonus", "radio", "instrumental",
+                ]
+                .iter()
+                .any(|k| tail.contains(k));
+                if !taggy {
+                    continue;
+                }
+            }
+            t = &t[..i];
+        }
+    }
+    t.trim().to_string()
+}
+
+fn clean_artist(s: &str) -> String {
+    let lower = s.to_lowercase();
+    let mut end = s.len();
+    for sep in [",", " & ", " feat", " ft", ";", " x ", " / ", "/"] {
+        if let Some(i) = lower.find(sep) {
+            if i < end {
+                end = i;
+            }
+        }
+    }
+    s[..end].trim().to_string()
+}
+
 pub fn fetch(title: &str, artist: &str, album: &str, duration_secs: Option<f64>) -> Result<Lyrics> {
     if let Some(cached) = load_cached(title, artist) {
         return Ok(cached);
     }
+
+    let ct = clean_title(title);
+    let ca = clean_artist(artist);
 
     let client = reqwest::blocking::Client::builder()
         .user_agent("lyrics-cli/0.1")
@@ -92,7 +130,33 @@ pub fn fetch(title: &str, artist: &str, album: &str, duration_secs: Option<f64>)
         }
     }
 
-    if let Ok(Some(lrc)) = crate::netease::fetch_lrc(title, artist) {
+    if ct != title || ca != artist {
+        let retry = client
+            .get("https://lrclib.net/api/get")
+            .query(&[("track_name", ct.as_str()), ("artist_name", ca.as_str())])
+            .send();
+        if let Ok(r) = retry {
+            if let Ok(p) = r.json::<LrcLibResponse>() {
+                if let Some(synced) = &p.synced_lyrics {
+                    let lines = parse_lrc(synced);
+                    if !lines.is_empty() {
+                        let result = Lyrics::Synced(lines);
+                        save_cached(title, artist, &result, Some(synced));
+                        return Ok(result);
+                    }
+                }
+                if let Some(plain) = &p.plain_lyrics {
+                    if !plain.trim().is_empty() {
+                        let result = Lyrics::Plain(plain.clone());
+                        save_cached(title, artist, &result, None);
+                        return Ok(result);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(Some(lrc)) = crate::netease::fetch_lrc(&ct, &ca) {
         let lines = parse_lrc(&lrc);
         if !lines.is_empty() {
             let result = Lyrics::Synced(lines);
@@ -111,13 +175,13 @@ pub fn fetch(title: &str, artist: &str, album: &str, duration_secs: Option<f64>)
         }
     }
 
-    if let Ok(Some(plain)) = crate::lyrics_ovh::fetch(title, artist) {
+    if let Ok(Some(plain)) = crate::lyrics_ovh::fetch(&ct, &ca) {
         let result = Lyrics::Plain(plain);
         save_cached(title, artist, &result, None);
         return Ok(result);
     }
 
-    if let Ok(Some(plain)) = crate::genius::fetch(title, artist) {
+    if let Ok(Some(plain)) = crate::genius::fetch(&ct, &ca) {
         let result = Lyrics::Plain(plain);
         save_cached(title, artist, &result, None);
         return Ok(result);
